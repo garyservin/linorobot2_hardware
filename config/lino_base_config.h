@@ -19,6 +19,9 @@
 
 #define LED_PIN 13 //used for debugging status
 
+#define LED_STRIP_LED_COUNT 16
+#define LED_STRIP_PIN 8
+
 //uncomment the base you're building
 // #define LINO_BASE DIFFERENTIAL_DRIVE       // 2WD and Tracked robot w/ 2 motors
 // #define LINO_BASE SKID_STEER            // 4WD robot

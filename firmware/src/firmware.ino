@@ -25,6 +25,7 @@
 #include <sensor_msgs/msg/magnetic_field.h>
 #include <geometry_msgs/msg/twist.h>
 #include <geometry_msgs/msg/vector3.h>
+#include <std_msgs/msg/color_rgba.h>
 
 #include "config.h"
 #include "motor.h"
@@ -36,6 +37,7 @@
 #define ENCODER_USE_INTERRUPTS
 #define ENCODER_OPTIMIZE_INTERRUPTS
 #include "encoder.h"
+#include "led_strip.h"
 
 #ifndef RCCHECK
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){rclErrorLoop();}}
@@ -51,11 +53,13 @@ rcl_publisher_t odom_publisher;
 rcl_publisher_t imu_publisher;
 rcl_publisher_t mag_publisher;
 rcl_subscription_t twist_subscriber;
+rcl_subscription_t led_subscriber;
 
 nav_msgs__msg__Odometry odom_msg;
 sensor_msgs__msg__Imu imu_msg;
 sensor_msgs__msg__MagneticField mag_msg;
 geometry_msgs__msg__Twist twist_msg;
+std_msgs__msg__ColorRGBA led_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
@@ -68,7 +72,7 @@ unsigned long long time_offset = 0;
 unsigned long prev_cmd_time = 0;
 unsigned long prev_odom_update = 0;
 
-enum states 
+enum states
 {
   WAITING_AGENT,
   AGENT_AVAILABLE,
@@ -92,26 +96,28 @@ PID motor3_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 PID motor4_pid(PWM_MIN, PWM_MAX, K_P, K_I, K_D);
 
 Kinematics kinematics(
-    Kinematics::LINO_BASE, 
-    MOTOR_MAX_RPM, 
-    MAX_RPM_RATIO, 
-    MOTOR_OPERATING_VOLTAGE, 
-    MOTOR_POWER_MAX_VOLTAGE, 
-    WHEEL_DIAMETER, 
+    Kinematics::LINO_BASE,
+    MOTOR_MAX_RPM,
+    MAX_RPM_RATIO,
+    MOTOR_OPERATING_VOLTAGE,
+    MOTOR_POWER_MAX_VOLTAGE,
+    WHEEL_DIAMETER,
     LR_WHEELS_DISTANCE
 );
 
 Odometry odometry;
-IMU imu;
 MAG mag;
+IMU imu;
+LedStrip led_strip(LED_STRIP_LED_COUNT, LED_STRIP_PIN);
 
 #ifndef BAUDRATE
 #define BAUDRATE 115200
 #endif
 
-void setup() 
+void setup()
 {
     pinMode(LED_PIN, OUTPUT);
+    led_strip.init();
     Serial.begin(BAUDRATE);
 #ifdef BOARD_INIT // board specific setup
     BOARD_INIT
@@ -138,21 +144,21 @@ void setup()
 }
 
 void loop() {
-    switch (state) 
+    switch (state)
     {
         case WAITING_AGENT:
             EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
             break;
         case AGENT_AVAILABLE:
             state = (true == createEntities()) ? AGENT_CONNECTED : WAITING_AGENT;
-            if (state == WAITING_AGENT) 
+            if (state == WAITING_AGENT)
             {
                 destroyEntities();
             }
             break;
         case AGENT_CONNECTED:
             EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
-            if (state == AGENT_CONNECTED) 
+            if (state == AGENT_CONNECTED)
             {
                 rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
             }
@@ -169,21 +175,28 @@ void loop() {
 #endif
 }
 
-void controlCallback(rcl_timer_t * timer, int64_t last_call_time) 
+void controlCallback(rcl_timer_t * timer, int64_t last_call_time)
 {
     RCLC_UNUSED(last_call_time);
-    if (timer != NULL) 
+    if (timer != NULL)
     {
        moveBase();
        publishData();
     }
 }
 
-void twistCallback(const void * msgin) 
+void twistCallback(const void * msgin)
 {
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
 
     prev_cmd_time = millis();
+}
+
+void ledCallback(const void * msgin)
+{
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+
+    led_strip.set(led_msg.r, led_msg.g, led_msg.b);
 }
 
 bool createEntities()
@@ -203,15 +216,16 @@ bool createEntities()
     RCCHECK(rclc_node_init_default(&node, "omnibot_base_node", "omnibot", &support));
 
     // create odometry publisher
-    RCCHECK(rclc_publisher_init_default( 
-        &odom_publisher, 
+    RCCHECK(rclc_publisher_init_default(
+        &odom_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
         "odom/unfiltered"
     ));
+
     // create IMU publisher
-    RCCHECK(rclc_publisher_init_default( 
-        &imu_publisher, 
+    RCCHECK(rclc_publisher_init_default(
+        &imu_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
 #ifndef USE_FAKE_MAG
@@ -228,23 +242,36 @@ bool createEntities()
         "imu/mag"
     ));
 #endif
+
     // create twist command subscriber
-    RCCHECK(rclc_subscription_init_default( 
-        &twist_subscriber, 
+    RCCHECK(rclc_subscription_init_default(
+        &twist_subscriber,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
         "cmd_vel"
     ));
+
+    // create led_strip command subscriber
+    RCCHECK(rclc_subscription_init_default(
+        &led_subscriber,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, ColorRGBA),
+        "led"
+    ));
+
     // create timer for actuating the motors at 50 Hz (1000/20)
     const unsigned int control_timeout = 20;
-    RCCHECK(rclc_timer_init_default( 
-        &control_timer, 
+    RCCHECK(rclc_timer_init_default(
+        &control_timer,
         &support,
         RCL_MS_TO_NS(control_timeout),
         controlCallback
     ));
+
     executor = rclc_executor_get_zero_initialized_executor();
-    RCCHECK(rclc_executor_init(&executor, &support.context, 2, & allocator));
+
+    RCCHECK(rclc_executor_init(&executor, &support.context, 3, & allocator));
+
     RCCHECK(rclc_executor_add_subscription(
         &executor,
         &twist_subscriber,
@@ -252,6 +279,15 @@ bool createEntities()
         &twistCallback,
         ON_NEW_DATA
     ));
+
+    RCCHECK(rclc_executor_add_subscription(
+        &executor,
+        &led_subscriber,
+        &led_msg,
+        &ledCallback,
+        ON_NEW_DATA
+    ));
+
     RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
 
     // synchronize time with the agent
@@ -272,13 +308,14 @@ bool destroyEntities()
     rcl_publisher_fini(&mag_publisher, &node);
 #endif
     rcl_subscription_fini(&twist_subscriber, &node);
+    rcl_subscription_fini(&led_subscriber, &node);
     rcl_node_fini(&node);
     rcl_timer_fini(&control_timer);
     rclc_executor_fini(&executor);
     rclc_support_fini(&support);
 
     digitalWrite(LED_PIN, HIGH);
-    
+
     return true;
 }
 
@@ -297,7 +334,7 @@ void fullStop()
 void moveBase()
 {
     // brake if there's no command received, or when it's only the first command sent
-    if(((millis() - prev_cmd_time) >= 200)) 
+    if(((millis() - prev_cmd_time) >= 200))
     {
         twist_msg.linear.x = 0.0;
         twist_msg.linear.y = 0.0;
@@ -307,8 +344,8 @@ void moveBase()
     }
     // get the required rpm for each motor based on required velocities, and base used
     Kinematics::rpm req_rpm = kinematics.getRPM(
-        twist_msg.linear.x, 
-        twist_msg.linear.y, 
+        twist_msg.linear.x,
+        twist_msg.linear.y,
         twist_msg.angular.z
     );
 
@@ -326,9 +363,9 @@ void moveBase()
     motor4_controller.spin(motor4_pid.compute(req_rpm.motor4, current_rpm4));
 
     Kinematics::velocities current_vel = kinematics.getVelocities(
-        current_rpm1, 
-        current_rpm2, 
-        current_rpm3, 
+        current_rpm1,
+        current_rpm2,
+        current_rpm3,
         current_rpm4
     );
 
@@ -336,9 +373,9 @@ void moveBase()
     float vel_dt = (now - prev_odom_update) / 1000.0;
     prev_odom_update = now;
     odometry.update(
-        vel_dt, 
-        current_vel.linear_x, 
-        current_vel.linear_y, 
+        vel_dt,
+        current_vel.linear_x,
+        current_vel.linear_y,
         current_vel.angular_z
     );
 }
@@ -381,7 +418,7 @@ void syncTime()
     // get the current time from the agent
     unsigned long now = millis();
     RCCHECK(rmw_uros_sync_session(10));
-    unsigned long long ros_time_ms = rmw_uros_epoch_millis(); 
+    unsigned long long ros_time_ms = rmw_uros_epoch_millis();
     // now we can find the difference between ROS time and uC time
     time_offset = ros_time_ms - now;
 }
@@ -398,7 +435,7 @@ struct timespec getTime()
     return tp;
 }
 
-void rclErrorLoop() 
+void rclErrorLoop()
 {
     while(true)
     {
@@ -411,8 +448,10 @@ void flashLED(int n_times)
     for(int i=0; i<n_times; i++)
     {
         digitalWrite(LED_PIN, HIGH);
+	led_strip.set(0.3, 0.0, 0.0);
         delay(150);
         digitalWrite(LED_PIN, LOW);
+	led_strip.set(0.0, 0.0, 0.0);
         delay(150);
     }
     delay(1000);
