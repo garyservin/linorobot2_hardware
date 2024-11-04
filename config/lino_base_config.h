@@ -15,6 +15,8 @@
 #ifndef LINO_BASE_CONFIG_H
 #define LINO_BASE_CONFIG_H
 
+#define ROS_DOMAIN_ID 1 // default to 0
+
 #define LED_PIN 13 //used for debugging status
 
 //uncomment the base you're building

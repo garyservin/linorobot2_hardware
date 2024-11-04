@@ -62,6 +62,7 @@ rclc_support_t support;
 rcl_allocator_t allocator;
 rcl_node_t node;
 rcl_timer_t control_timer;
+rcl_init_options_t init_options;
 
 unsigned long long time_offset = 0;
 unsigned long prev_cmd_time = 0;
@@ -187,11 +188,20 @@ void twistCallback(const void * msgin)
 
 bool createEntities()
 {
+    // Initialize micro-ROS allocator
     allocator = rcl_get_default_allocator();
-    //create init_options
-    RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
-    // create node
-    RCCHECK(rclc_node_init_default(&node, "linorobot_base_node", "", &support));
+
+    // Initialize and modify options (Set DOMAIN ID)
+    init_options = rcl_get_zero_initialized_init_options();
+    RCCHECK(rcl_init_options_init(&init_options, allocator));
+    RCCHECK(rcl_init_options_set_domain_id(&init_options, ROS_DOMAIN_ID));
+
+    // Initialize support object
+    RCCHECK(rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator));
+
+    // Create node object
+    RCCHECK(rclc_node_init_default(&node, "omnibot_base_node", "omnibot", &support));
+
     // create odometry publisher
     RCCHECK(rclc_publisher_init_default( 
         &odom_publisher, 
@@ -236,10 +246,10 @@ bool createEntities()
     executor = rclc_executor_get_zero_initialized_executor();
     RCCHECK(rclc_executor_init(&executor, &support.context, 2, & allocator));
     RCCHECK(rclc_executor_add_subscription(
-        &executor, 
-        &twist_subscriber, 
-        &twist_msg, 
-        &twistCallback, 
+        &executor,
+        &twist_subscriber,
+        &twist_msg,
+        &twistCallback,
         ON_NEW_DATA
     ));
     RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
