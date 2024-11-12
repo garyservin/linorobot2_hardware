@@ -4,13 +4,13 @@
 #include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
 
-class LedStrip
+class LedStripHW
 {
     private:
         Adafruit_NeoPixel strip_;
 
     public:
-    LedStrip(uint16_t led_count, uint8_t pin):
+    LedStripHW(uint16_t led_count, uint8_t pin):
         strip_(led_count, pin)
     {
     }
@@ -20,20 +20,25 @@ class LedStrip
         strip_.begin();
         strip_.setBrightness( 30 );
         strip_.clear();
-        set(0.2, 0.2, 0.2);
+        set(50, 50, 50);
         strip_.show();
     }
 
-    void set(float r, float g, float b)
+    void set_strip(const void * msgin)
     {
-        // Convert floats to integers that the library can use
-        uint8_t red = min((uint8_t) (r * 255), 255);
-        uint8_t green = min((uint8_t) (g * 255), 255);
-        uint8_t blue = min((uint8_t) (b * 255), 255);
+	const omnibot_interfaces__msg__LedStrip * msg = (const omnibot_interfaces__msg__LedStrip *)msgin;
 
+        for(uint8_t i=0; i<strip_.numPixels(); i++){
+            strip_.setPixelColor(i, strip_.Color(msg->data[i].red, msg->data[i].green, msg->data[i].blue));
+	}
+        strip_.show();   // Send the updated pixel colors to the hardware.
+    }
+
+    void set(uint8_t red, uint8_t green, uint8_t blue)
+    {
         for(int i=0; i<strip_.numPixels(); i++) { // For each pixel...
                 strip_.setPixelColor(i, strip_.Color(red, green, blue));
-            }
+        }
         strip_.show();   // Send the updated pixel colors to the hardware.
     }
 };

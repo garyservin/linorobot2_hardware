@@ -25,7 +25,7 @@
 #include <sensor_msgs/msg/magnetic_field.h>
 #include <geometry_msgs/msg/twist.h>
 #include <geometry_msgs/msg/vector3.h>
-#include <std_msgs/msg/color_rgba.h>
+#include <omnibot_interfaces/msg/led_strip.h>
 
 #include "config.h"
 #include "motor.h"
@@ -59,7 +59,7 @@ nav_msgs__msg__Odometry odom_msg;
 sensor_msgs__msg__Imu imu_msg;
 sensor_msgs__msg__MagneticField mag_msg;
 geometry_msgs__msg__Twist twist_msg;
-std_msgs__msg__ColorRGBA led_msg;
+omnibot_interfaces__msg__LedStrip led_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
@@ -108,7 +108,7 @@ Kinematics kinematics(
 Odometry odometry;
 MAG mag;
 IMU imu;
-LedStrip led_strip(LED_STRIP_LED_COUNT, LED_STRIP_PIN);
+LedStripHW led_strip(LED_STRIP_LED_COUNT, LED_STRIP_PIN);
 
 #ifndef BAUDRATE
 #define BAUDRATE 115200
@@ -196,7 +196,7 @@ void ledCallback(const void * msgin)
 {
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
 
-    led_strip.set(led_msg.r, led_msg.g, led_msg.b);
+    led_strip.set_strip(msgin);
 }
 
 bool createEntities()
@@ -255,17 +255,18 @@ bool createEntities()
     RCCHECK(rclc_subscription_init_default(
         &led_subscriber,
         &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, ColorRGBA),
+        ROSIDL_GET_MSG_TYPE_SUPPORT(omnibot_interfaces, msg, LedStrip),
         "led"
     ));
 
     // create timer for actuating the motors at 50 Hz (1000/20)
     const unsigned int control_timeout = 20;
-    RCCHECK(rclc_timer_init_default(
+    RCCHECK(rclc_timer_init_default2(
         &control_timer,
         &support,
         RCL_MS_TO_NS(control_timeout),
-        controlCallback
+        controlCallback,
+        true
     ));
 
     executor = rclc_executor_get_zero_initialized_executor();
@@ -448,10 +449,10 @@ void flashLED(int n_times)
     for(int i=0; i<n_times; i++)
     {
         digitalWrite(LED_PIN, HIGH);
-	led_strip.set(0.3, 0.0, 0.0);
+	led_strip.set(50, 50, 50);
         delay(150);
         digitalWrite(LED_PIN, LOW);
-	led_strip.set(0.0, 0.0, 0.0);
+	led_strip.set(0, 0, 0);
         delay(150);
     }
     delay(1000);
