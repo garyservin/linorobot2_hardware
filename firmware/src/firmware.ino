@@ -449,7 +449,7 @@ void flashLED(int n_times)
     for(int i=0; i<n_times; i++)
     {
         digitalWrite(LED_PIN, HIGH);
-	led_strip.set(50, 50, 50);
+	led_strip.set(50, 0, 0);
         delay(150);
         digitalWrite(LED_PIN, LOW);
 	led_strip.set(0, 0, 0);
