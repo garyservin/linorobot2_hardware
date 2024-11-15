@@ -251,12 +251,18 @@ bool createEntities()
         "cmd_vel"
     ));
 
+    // Set client QoS
+    rmw_qos_profile_t qos_profile_led = rmw_qos_profile_default;
+    qos_profile_led.durability = RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL;
+    qos_profile_led.depth = 1;
+
     // create led_strip command subscriber
-    RCCHECK(rclc_subscription_init_default(
+    RCCHECK(rclc_subscription_init(
         &led_subscriber,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(omnibot_interfaces, msg, LedStrip),
-        "led"
+        "led",
+        &qos_profile_led
     ));
 
     // create timer for actuating the motors at 50 Hz (1000/20)
